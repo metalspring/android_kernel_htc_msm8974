@@ -558,9 +558,9 @@ static int h245_help(struct sk_buff *skb, unsigned int protoff,
 {
 	static MultimediaSystemControlMessage mscm;
 	unsigned char *data = NULL;
-	int datalen;
-	int dataoff;
-	int ret;
+	int datalen = 0;
+	int dataoff = 0;
+	int ret = 0;
 
 	
 	if (ctinfo != IP_CT_ESTABLISHED && ctinfo != IP_CT_ESTABLISHED_REPLY)
@@ -1094,9 +1094,9 @@ static int q931_help(struct sk_buff *skb, unsigned int protoff,
 {
 	static Q931 q931;
 	unsigned char *data = NULL;
-	int datalen;
-	int dataoff;
-	int ret;
+	int datalen = 0;
+	int dataoff = 0;
+	int ret = 0;
 
 	
 	if (ctinfo != IP_CT_ESTABLISHED && ctinfo != IP_CT_ESTABLISHED_REPLY)
