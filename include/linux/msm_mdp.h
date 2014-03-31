@@ -1,7 +1,7 @@
 /* include/linux/msm_mdp.h
  *
  * Copyright (C) 2007 Google Incorporated
- * Copyright (c) 2012-2013 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2014 The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,7 +17,6 @@
 
 #include <linux/types.h>
 #include <linux/fb.h>
-#include <linux/minifb.h>
 
 #define MSMFB_IOCTL_MAGIC 'm'
 #define MSMFB_GRP_DISP          _IOW(MSMFB_IOCTL_MAGIC, 1, unsigned int)
@@ -27,6 +26,7 @@
 #define MSMFB_CURSOR _IOW(MSMFB_IOCTL_MAGIC, 130, struct fb_cursor)
 #define MSMFB_SET_LUT _IOW(MSMFB_IOCTL_MAGIC, 131, struct fb_cmap)
 #define MSMFB_HISTOGRAM _IOWR(MSMFB_IOCTL_MAGIC, 132, struct mdp_histogram_data)
+/* new ioctls's for set/get ccs matrix */
 #define MSMFB_GET_CCS_MATRIX  _IOWR(MSMFB_IOCTL_MAGIC, 133, struct mdp_ccs)
 #define MSMFB_SET_CCS_MATRIX  _IOW(MSMFB_IOCTL_MAGIC, 134, struct mdp_ccs)
 #define MSMFB_OVERLAY_SET       _IOWR(MSMFB_IOCTL_MAGIC, 135, \
@@ -79,16 +79,8 @@
 #define MSMFB_WRITEBACK_SET_MIRRORING_HINT _IOW(MSMFB_IOCTL_MAGIC, 167, \
 						unsigned int)
 #define MSMFB_ASYNC_BLIT              _IOW(MSMFB_IOCTL_MAGIC, 168, unsigned int)
-
-#define MSMFB_GET_USB_PROJECTOR_INFO _IOR(MSMFB_IOCTL_MAGIC, 301, struct msmfb_usb_projector_info)
-#define MSMFB_SET_USB_PROJECTOR_INFO _IOW(MSMFB_IOCTL_MAGIC, 302, struct msmfb_usb_projector_info)
-#define MSMFB_SET_DISP_PROJECTOR_INFO _IOW(MSMFB_IOCTL_MAGIC, 303, struct msmfb_disp_projector_info)
-
-#define MSMFB_USBFB_INIT _IOW(MSMFB_IOCTL_MAGIC, 304, struct minifb_session)
-#define MSMFB_USBFB_TERMINATE _IOW(MSMFB_IOCTL_MAGIC, 305, struct minifb_session)
-#define MSMFB_USBFB_QUEUE_BUFFER _IOW(MSMFB_IOCTL_MAGIC, 306, struct minifb_req)
-#define MSMFB_USBFB_DEQUEUE_BUFFER _IOW(MSMFB_IOCTL_MAGIC, 307, struct minifb_req)
-
+#define MSMFB_OVERLAY_PREPARE		_IOWR(MSMFB_IOCTL_MAGIC, 169, \
+						struct mdp_overlay_list)
 #define FB_TYPE_3D_PANEL 0x10101010
 #define MDP_IMGTYPE2_START 0x10000
 #define MSMFB_DRIVER_VERSION	0xF9E8D701
@@ -106,48 +98,48 @@ enum {
 };
 
 enum {
-	MDP_RGB_565,      
-	MDP_XRGB_8888,    
-	MDP_Y_CBCR_H2V2,  
+	MDP_RGB_565,      /* RGB 565 planer */
+	MDP_XRGB_8888,    /* RGB 888 padded */
+	MDP_Y_CBCR_H2V2,  /* Y and CbCr, pseudo planer w/ Cb is in MSB */
 	MDP_Y_CBCR_H2V2_ADRENO,
-	MDP_ARGB_8888,    
-	MDP_RGB_888,      
-	MDP_Y_CRCB_H2V2,  
-	MDP_YCRYCB_H2V1,  
-	MDP_CBYCRY_H2V1,  
-	MDP_Y_CRCB_H2V1,  
-	MDP_Y_CBCR_H2V1,   
+	MDP_ARGB_8888,    /* ARGB 888 */
+	MDP_RGB_888,      /* RGB 888 planer */
+	MDP_Y_CRCB_H2V2,  /* Y and CrCb, pseudo planer w/ Cr is in MSB */
+	MDP_YCRYCB_H2V1,  /* YCrYCb interleave */
+	MDP_CBYCRY_H2V1,  /* CbYCrY interleave */
+	MDP_Y_CRCB_H2V1,  /* Y and CrCb, pseduo planer w/ Cr is in MSB */
+	MDP_Y_CBCR_H2V1,   /* Y and CrCb, pseduo planer w/ Cr is in MSB */
 	MDP_Y_CRCB_H1V2,
 	MDP_Y_CBCR_H1V2,
-	MDP_RGBA_8888,    
-	MDP_BGRA_8888,	  
-	MDP_RGBX_8888,	  
-	MDP_Y_CRCB_H2V2_TILE,  
-	MDP_Y_CBCR_H2V2_TILE,  
-	MDP_Y_CR_CB_H2V2,  
-	MDP_Y_CR_CB_GH2V2,  
-	MDP_Y_CB_CR_H2V2,  
-	MDP_Y_CRCB_H1V1,  
-	MDP_Y_CBCR_H1V1,  
-	MDP_YCRCB_H1V1,   
-	MDP_YCBCR_H1V1,   
-	MDP_BGR_565,      
-	MDP_BGR_888,      
+	MDP_RGBA_8888,    /* ARGB 888 */
+	MDP_BGRA_8888,	  /* ABGR 888 */
+	MDP_RGBX_8888,	  /* RGBX 888 */
+	MDP_Y_CRCB_H2V2_TILE,  /* Y and CrCb, pseudo planer tile */
+	MDP_Y_CBCR_H2V2_TILE,  /* Y and CbCr, pseudo planer tile */
+	MDP_Y_CR_CB_H2V2,  /* Y, Cr and Cb, planar */
+	MDP_Y_CR_CB_GH2V2,  /* Y, Cr and Cb, planar aligned to Android YV12 */
+	MDP_Y_CB_CR_H2V2,  /* Y, Cb and Cr, planar */
+	MDP_Y_CRCB_H1V1,  /* Y and CrCb, pseduo planer w/ Cr is in MSB */
+	MDP_Y_CBCR_H1V1,  /* Y and CbCr, pseduo planer w/ Cb is in MSB */
+	MDP_YCRCB_H1V1,   /* YCrCb interleave */
+	MDP_YCBCR_H1V1,   /* YCbCr interleave */
+	MDP_BGR_565,      /* BGR 565 planer */
+	MDP_BGR_888,      /* BGR 888 */
 	MDP_Y_CBCR_H2V2_VENUS,
-	MDP_BGRX_8888,   
-	MDP_RGBA_8888_TILE,	
-	MDP_ARGB_8888_TILE,	
-	MDP_ABGR_8888_TILE,	
-	MDP_BGRA_8888_TILE,	
-	MDP_RGBX_8888_TILE,	
-	MDP_XRGB_8888_TILE,	
-	MDP_XBGR_8888_TILE,	
-	MDP_BGRX_8888_TILE,	
-	MDP_YCBYCR_H2V1,  
+	MDP_BGRX_8888,   /* BGRX 8888 */
+	MDP_RGBA_8888_TILE,	/* RGBA 8888 in tile format */
+	MDP_ARGB_8888_TILE,	/* ARGB 8888 in tile format */
+	MDP_ABGR_8888_TILE,	/* ABGR 8888 in tile format */
+	MDP_BGRA_8888_TILE,	/* BGRA 8888 in tile format */
+	MDP_RGBX_8888_TILE,	/* RGBX 8888 in tile format */
+	MDP_XRGB_8888_TILE,	/* XRGB 8888 in tile format */
+	MDP_XBGR_8888_TILE,	/* XBGR 8888 in tile format */
+	MDP_BGRX_8888_TILE,	/* BGRX 8888 in tile format */
+	MDP_YCBYCR_H2V1,  /* YCbYCr interleave */
 	MDP_IMGTYPE_LIMIT,
-	MDP_RGB_BORDERFILL,	
-	MDP_FB_FORMAT = MDP_IMGTYPE2_START,    
-	MDP_IMGTYPE_LIMIT2 
+	MDP_RGB_BORDERFILL,	/* border fill pipe */
+	MDP_FB_FORMAT = MDP_IMGTYPE2_START,    /* framebuffer format */
+	MDP_IMGTYPE_LIMIT2 /* Non valid image type after this enum */
 };
 
 enum {
@@ -167,6 +159,7 @@ enum {
 #define MDSS_MDP_RIGHT_MIXER		0x100
 #define MDSS_MDP_DUAL_PIPE		0x200
 
+/* mdp_blit_req flag values */
 #define MDP_ROT_NOP 0
 #define MDP_FLIP_LR 0x1
 #define MDP_FLIP_UD 0x2
@@ -177,7 +170,7 @@ enum {
 #define MDP_BLUR 0x10
 #define MDP_BLEND_FG_PREMULT 0x20000
 #define MDP_IS_FG 0x40000
-#define MDP_SOLID_FILL 0x00001000
+#define MDP_SOLID_FILL 0x00000020
 #define MDP_DEINTERLACE 0x80000000
 #define MDP_SHARPENING  0x40000000
 #define MDP_NO_DMA_BARRIER_START	0x20000000
@@ -210,7 +203,9 @@ enum {
 #define MDP_FB_PAGE_PROTECTION_WRITETHROUGHCACHE (2)
 #define MDP_FB_PAGE_PROTECTION_WRITEBACKCACHE    (3)
 #define MDP_FB_PAGE_PROTECTION_WRITEBACKWACACHE  (4)
+/* Sentinel: Don't use! */
 #define MDP_FB_PAGE_PROTECTION_INVALID           (5)
+/* Count of the number of MDP_FB_PAGE_PROTECTION_... values. */
 #define MDP_NUM_FB_PAGE_PROTECTION_VALUES        (5)
 
 struct mdp_rect {
@@ -225,10 +220,13 @@ struct mdp_img {
 	uint32_t height;
 	uint32_t format;
 	uint32_t offset;
-	int memory_id;		
+	int memory_id;		/* the file descriptor */
 	uint32_t priv;
 };
 
+/*
+ * {3x3} + {3} ccs matrix
+ */
 
 #define MDP_CCS_RGB2YUV 	0
 #define MDP_CCS_YUV2RGB 	1
@@ -237,9 +235,9 @@ struct mdp_img {
 #define MDP_BV_SIZE	3
 
 struct mdp_ccs {
-	int direction;			
-	uint16_t ccs[MDP_CCS_SIZE];	
-	uint16_t bv[MDP_BV_SIZE];	
+	int direction;			/* MDP_CCS_RGB2YUV or YUV2RGB */
+	uint16_t ccs[MDP_CCS_SIZE];	/* 3x3 color coefficients */
+	uint16_t bv[MDP_BV_SIZE];	/* 1x3 bias vector */
 };
 
 struct mdp_csc {
@@ -251,18 +249,30 @@ struct mdp_csc {
 	uint32_t csc_post_lv[6];
 };
 
+/* The version of the mdp_blit_req structure so that
+ * user applications can selectively decide which functionality
+ * to include
+ */
 
 #define MDP_BLIT_REQ_VERSION 2
+
+struct color {
+	uint32_t r;
+	uint32_t g;
+	uint32_t b;
+	uint32_t alpha;
+};
 
 struct mdp_blit_req {
 	struct mdp_img src;
 	struct mdp_img dst;
 	struct mdp_rect src_rect;
 	struct mdp_rect dst_rect;
+	struct color const_color;
 	uint32_t alpha;
 	uint32_t transp_mask;
 	uint32_t flags;
-	int sharpening_strength;  
+	int sharpening_strength;  /* -127 <--> 127, default 64 */
 };
 
 struct mdp_blit_req_list {
@@ -311,6 +321,27 @@ struct msmfb_writeback_data {
 #define MDP_PP_IGC_FLAG_ROM0	0x10
 #define MDP_PP_IGC_FLAG_ROM1	0x20
 
+#define MDP_PP_PA_HUE_ENABLE		0x10
+#define MDP_PP_PA_SAT_ENABLE		0x20
+#define MDP_PP_PA_VAL_ENABLE		0x40
+#define MDP_PP_PA_CONT_ENABLE		0x80
+#define MDP_PP_PA_SIX_ZONE_ENABLE	0x100
+#define MDP_PP_PA_SKIN_ENABLE		0x200
+#define MDP_PP_PA_SKY_ENABLE		0x400
+#define MDP_PP_PA_FOL_ENABLE		0x800
+#define MDP_PP_PA_HUE_MASK		0x1000
+#define MDP_PP_PA_SAT_MASK		0x2000
+#define MDP_PP_PA_VAL_MASK		0x4000
+#define MDP_PP_PA_CONT_MASK		0x8000
+#define MDP_PP_PA_SIX_ZONE_HUE_MASK	0x10000
+#define MDP_PP_PA_SIX_ZONE_SAT_MASK	0x20000
+#define MDP_PP_PA_SIX_ZONE_VAL_MASK	0x40000
+#define MDP_PP_PA_MEM_COL_SKIN_MASK	0x80000
+#define MDP_PP_PA_MEM_COL_SKY_MASK	0x100000
+#define MDP_PP_PA_MEM_COL_FOL_MASK	0x200000
+#define MDP_PP_PA_MEM_PROTECT_EN	0x400000
+#define MDP_PP_PA_SAT_ZERO_EXP_EN	0x800000
+
 #define MDSS_PP_DSPP_CFG	0x000
 #define MDSS_PP_SSPP_CFG	0x100
 #define MDSS_PP_LM_CFG	0x200
@@ -355,13 +386,14 @@ struct mdp_qseed_cfg_data {
 #define MDP_OVERLAY_PP_SHARP_CFG       0x10
 #define MDP_OVERLAY_PP_HIST_CFG        0x20
 #define MDP_OVERLAY_PP_HIST_LUT_CFG    0x40
+#define MDP_OVERLAY_PP_PA_V2_CFG       0x80
 
 #define MDP_CSC_FLAG_ENABLE	0x1
 #define MDP_CSC_FLAG_YUV_IN	0x2
 #define MDP_CSC_FLAG_YUV_OUT	0x4
 
 struct mdp_csc_cfg {
-	
+	/* flags for enable CSC, toggling RGB,YUV input/output */
 	uint32_t flags;
 	uint32_t csc_mv[9];
 	uint32_t csc_pre_bv[3];
@@ -394,19 +426,19 @@ struct mdp_pa_mem_col_cfg {
 #define MDP_SIX_ZONE_LUT_SIZE		384
 
 struct mdp_pa_v2_data {
-	
+	/* Mask bits for PA features */
 	uint32_t flags;
 	uint32_t global_hue_adj;
 	uint32_t global_sat_adj;
 	uint32_t global_val_adj;
 	uint32_t global_cont_adj;
-	uint32_t six_zone_len;
-	uint32_t *six_zone_curve_p0;
-	uint32_t *six_zone_curve_p1;
-	uint32_t six_zone_thresh;
 	struct mdp_pa_mem_col_cfg skin_cfg;
 	struct mdp_pa_mem_col_cfg sky_cfg;
 	struct mdp_pa_mem_col_cfg fol_cfg;
+	uint32_t six_zone_len;
+	uint32_t six_zone_thresh;
+	uint32_t *six_zone_curve_p0;
+	uint32_t *six_zone_curve_p1;
 };
 
 struct mdp_igc_lut_data {
@@ -436,12 +468,32 @@ struct mdp_overlay_pp_params {
 	struct mdp_csc_cfg csc_cfg;
 	struct mdp_qseed_cfg qseed_cfg[2];
 	struct mdp_pa_cfg pa_cfg;
+	struct mdp_pa_v2_data pa_v2_cfg;
 	struct mdp_igc_lut_data igc_cfg;
 	struct mdp_sharp_cfg sharp_cfg;
 	struct mdp_histogram_cfg hist_cfg;
 	struct mdp_hist_lut_data hist_lut_cfg;
 };
 
+/**
+ * enum mdss_mdp_blend_op - Different blend operations set by userspace
+ *
+ * @BLEND_OP_NOT_DEFINED:    No blend operation defined for the layer.
+ * @BLEND_OP_OPAQUE:         Apply a constant blend operation. The layer
+ *                           would appear opaque in case fg plane alpha is
+ *                           0xff.
+ * @BLEND_OP_PREMULTIPLIED:  Apply source over blend rule. Layer already has
+ *                           alpha pre-multiplication done. If fg plane alpha
+ *                           is less than 0xff, apply modulation as well. This
+ *                           operation is intended on layers having alpha
+ *                           channel.
+ * @BLEND_OP_COVERAGE:       Apply source over blend rule. Layer is not alpha
+ *                           pre-multiplied. Apply pre-multiplication. If fg
+ *                           plane alpha is less than 0xff, apply modulation as
+ *                           well.
+ * @BLEND_OP_MAX:            Used to track maximum blend operation possible by
+ *                           mdp.
+ */
 enum mdss_mdp_blend_op {
 	BLEND_OP_NOT_DEFINED = 0,
 	BLEND_OP_OPAQUE,
@@ -450,21 +502,94 @@ enum mdss_mdp_blend_op {
 	BLEND_OP_MAX,
 };
 
+#define MAX_PLANES	4
+struct mdp_scale_data {
+	uint8_t enable_pxl_ext;
+
+	int init_phase_x[MAX_PLANES];
+	int phase_step_x[MAX_PLANES];
+	int init_phase_y[MAX_PLANES];
+	int phase_step_y[MAX_PLANES];
+
+	int num_ext_pxls_left[MAX_PLANES];
+	int num_ext_pxls_right[MAX_PLANES];
+	int num_ext_pxls_top[MAX_PLANES];
+	int num_ext_pxls_btm[MAX_PLANES];
+
+	int left_ftch[MAX_PLANES];
+	int left_rpt[MAX_PLANES];
+	int right_ftch[MAX_PLANES];
+	int right_rpt[MAX_PLANES];
+
+	int top_rpt[MAX_PLANES];
+	int btm_rpt[MAX_PLANES];
+	int top_ftch[MAX_PLANES];
+	int btm_ftch[MAX_PLANES];
+
+	uint32_t roi_w[MAX_PLANES];
+};
+
+/**
+ * struct mdp_overlay - overlay surface structure
+ * @src:	Source image information (width, height, format).
+ * @src_rect:	Source crop rectangle, portion of image that will be fetched.
+ *		This should always be within boundaries of source image.
+ * @dst_rect:	Destination rectangle, the position and size of image on screen.
+ *		This should always be within panel boundaries.
+ * @z_order:	Blending stage to occupy in display, if multiple layers are
+ *		present, highest z_order usually means the top most visible
+ *		layer. The range acceptable is from 0-3 to support blending
+ *		up to 4 layers.
+ * @is_fg:	This flag is used to disable blending of any layers with z_order
+ *		less than this overlay. It means that any layers with z_order
+ *		less than this layer will not be blended and will be replaced
+ *		by the background border color.
+ * @alpha:	Used to set plane opacity. The range can be from 0-255, where
+ *		0 means completely transparent and 255 means fully opaque.
+ * @transp_mask: Color used as color key for transparency. Any pixel in fetched
+ *		image matching this color will be transparent when blending.
+ *		The color should be in same format as the source image format.
+ * @flags:	This is used to customize operation of overlay. See MDP flags
+ *		for more information.
+ * @user_data:	DEPRECATED* Used to store user application specific information.
+ * @bg_color:	Solid color used to fill the overlay surface when no source
+ *		buffer is provided.
+ * @horz_deci:	Horizontal decimation value, this indicates the amount of pixels
+ *		dropped for each pixel that is fetched from a line. The value
+ *		given should be power of two of decimation amount.
+ *		0: no decimation
+ *		1: decimate by 2 (drop 1 pixel for each pixel fetched)
+ *		2: decimate by 4 (drop 3 pixels for each pixel fetched)
+ *		3: decimate by 8 (drop 7 pixels for each pixel fetched)
+ *		4: decimate by 16 (drop 15 pixels for each pixel fetched)
+ * @vert_deci:	Vertical decimation value, this indicates the amount of lines
+ *		dropped for each line that is fetched from overlay. The value
+ *		given should be power of two of decimation amount.
+ *		0: no decimation
+ *		1: decimation by 2 (drop 1 line for each line fetched)
+ *		2: decimation by 4 (drop 3 lines for each line fetched)
+ *		3: decimation by 8 (drop 7 lines for each line fetched)
+ *		4: decimation by 16 (drop 15 lines for each line fetched)
+ * @overlay_pp_cfg: Overlay post processing configuration, for more information
+ *		see struct mdp_overlay_pp_params.
+ */
 struct mdp_overlay {
 	struct msmfb_img src;
 	struct mdp_rect src_rect;
 	struct mdp_rect dst_rect;
-	uint32_t z_order;	
-	uint32_t is_fg;		
+	uint32_t z_order;	/* stage number */
+	uint32_t is_fg;		/* control alpha & transp */
 	uint32_t alpha;
 	uint32_t blend_op;
 	uint32_t transp_mask;
 	uint32_t flags;
 	uint32_t id;
-	uint32_t user_data[7];
+	uint32_t user_data[6];
+	uint32_t bg_color;
 	uint8_t horz_deci;
 	uint8_t vert_deci;
 	struct mdp_overlay_pp_params overlay_pp_cfg;
+	struct mdp_scale_data scale;
 };
 
 struct msmfb_overlay_3d {
@@ -490,19 +615,21 @@ struct mdp_histogram {
 	uint32_t *b;
 };
 
+#define MISR_CRC_BATCH_SIZE 32
 enum {
-	DISPLAY_MISR_EDP,
+	DISPLAY_MISR_EDP = 0,
 	DISPLAY_MISR_DSI0,
 	DISPLAY_MISR_DSI1,
 	DISPLAY_MISR_HDMI,
 	DISPLAY_MISR_LCDC,
+	DISPLAY_MISR_MDP,
 	DISPLAY_MISR_ATV,
 	DISPLAY_MISR_DSI_CMD,
 	DISPLAY_MISR_MAX
 };
 
 enum {
-	MISR_OP_NONE,
+	MISR_OP_NONE = 0,
 	MISR_OP_SFM,
 	MISR_OP_MFM,
 	MISR_OP_BM,
@@ -513,9 +640,21 @@ struct mdp_misr {
 	uint32_t block_id;
 	uint32_t frame_count;
 	uint32_t crc_op_mode;
-	uint32_t crc_value[32];
+	uint32_t crc_value[MISR_CRC_BATCH_SIZE];
 };
 
+/*
+
+	mdp_block_type defines the identifiers for pipes in MDP 4.3 and up
+
+	MDP_BLOCK_RESERVED is provided for backward compatibility and is
+	deprecated. It corresponds to DMA_P. So MDP_BLOCK_DMA_P should be used
+	instead.
+
+	MDP_LOGICAL_BLOCK_DISP_0 identifies the display pipe which fb0 uses,
+	same for others.
+
+*/
 
 enum {
 	MDP_BLOCK_RESERVED = 0,
@@ -535,6 +674,10 @@ enum {
 	MDP_BLOCK_MAX,
 };
 
+/*
+ * mdp_histogram_start_req is used to provide the parameters for
+ * histogram start request
+ */
 
 struct mdp_histogram_start_req {
 	uint32_t block;
@@ -543,6 +686,10 @@ struct mdp_histogram_start_req {
 	uint16_t num_bins;
 };
 
+/*
+ * mdp_histogram_data is used to return the histogram data, once
+ * the histogram is done/stopped/cance
+ */
 
 struct mdp_histogram_data {
 	uint32_t block;
@@ -609,6 +756,11 @@ struct mdp_pa_cfg_data {
 	struct mdp_pa_cfg pa_data;
 };
 
+struct mdp_pa_v2_cfg_data {
+	uint32_t block;
+	struct mdp_pa_v2_data pa_v2_data;
+};
+
 struct mdp_dither_cfg_data {
 	uint32_t block;
 	uint32_t flags;
@@ -660,6 +812,7 @@ enum {
 
 #define MDSS_MAX_BL_BRIGHTNESS 255
 #define AD_BL_LIN_LEN 256
+#define AD_BL_ATT_LUT_LEN 33
 
 #define MDSS_AD_MODE_AUTO_BL	0x0
 #define MDSS_AD_MODE_AUTO_STR	0x1
@@ -688,9 +841,13 @@ struct mdss_ad_init {
 	uint16_t frame_h;
 	uint8_t logo_v;
 	uint8_t logo_h;
+	uint32_t alpha;
+	uint32_t alpha_base;
 	uint32_t bl_lin_len;
+	uint32_t bl_att_len;
 	uint32_t *bl_lin;
 	uint32_t *bl_lin_inv;
+	uint32_t *bl_att_lut;
 };
 
 #define MDSS_AD_BL_CTRL_MODE_EN 1
@@ -710,6 +867,7 @@ struct mdss_ad_cfg {
 	uint32_t bl_ctrl_mode;
 };
 
+/* ops uses standard MDP_PP_* flags */
 struct mdss_ad_init_cfg {
 	uint32_t ops;
 	union {
@@ -718,6 +876,7 @@ struct mdss_ad_init_cfg {
 	} params;
 };
 
+/* mode uses MDSS_AD_MODE_* flags */
 struct mdss_ad_input {
 	uint32_t mode;
 	union {
@@ -741,6 +900,7 @@ enum {
 	mdp_op_qseed_cfg,
 	mdp_bl_scale_cfg,
 	mdp_op_pa_cfg,
+	mdp_op_pa_v2_cfg,
 	mdp_op_dither_cfg,
 	mdp_op_gamut_cfg,
 	mdp_op_calib_cfg,
@@ -760,7 +920,7 @@ enum {
 	WB_FORMAT_ARGB_8888,
 	WB_FORMAT_BGRA_8888,
 	WB_FORMAT_BGRX_8888,
-	WB_FORMAT_ARGB_8888_INPUT_ALPHA 
+	WB_FORMAT_ARGB_8888_INPUT_ALPHA /* Need to support */
 };
 
 struct msmfb_mdp_pp {
@@ -772,6 +932,7 @@ struct msmfb_mdp_pp {
 		struct mdp_qseed_cfg_data qseed_cfg_data;
 		struct mdp_bl_scale_data bl_scale_data;
 		struct mdp_pa_cfg_data pa_cfg_data;
+		struct mdp_pa_v2_cfg_data pa_v2_cfg_data;
 		struct mdp_dither_cfg_data dither_cfg_data;
 		struct mdp_gamut_cfg_data gamut_cfg_data;
 		struct mdp_calib_config_data calib_cfg;
@@ -790,6 +951,7 @@ enum {
 	metadata_op_frame_rate,
 	metadata_op_vic,
 	metadata_op_wb_format,
+	metadata_op_wb_secure,
 	metadata_op_get_caps,
 	metadata_op_crc,
 	metadata_op_max
@@ -809,6 +971,8 @@ struct mdss_hw_caps {
 	uint8_t rgb_pipes;
 	uint8_t vig_pipes;
 	uint8_t dma_pipes;
+	uint8_t max_smp_cnt;
+	uint8_t smp_per_pipe;
 	uint32_t features;
 };
 
@@ -822,11 +986,13 @@ struct msmfb_metadata {
 		uint32_t panel_frame_rate;
 		uint32_t video_info_code;
 		struct mdss_hw_caps caps;
+		uint8_t secure_en;
 	} data;
 };
 
 #define MDP_MAX_FENCE_FD	32
 #define MDP_BUF_SYNC_FLAG_WAIT	1
+#define MDP_BUF_SYNC_FLAG_RETIRE_FENCE	0x10
 
 struct mdp_buf_sync {
 	uint32_t flags;
@@ -834,6 +1000,7 @@ struct mdp_buf_sync {
 	uint32_t session_id;
 	int *acq_fen_fd;
 	int *rel_fen_fd;
+	int *retire_fen_fd;
 };
 
 struct mdp_async_blit_req_list {
@@ -843,20 +1010,30 @@ struct mdp_async_blit_req_list {
 };
 
 #define MDP_DISPLAY_COMMIT_OVERLAY	1
-struct mdp_buf_fence {
-	uint32_t flags;
-	uint32_t acq_fen_fd_cnt;
-	int acq_fen_fd[MDP_MAX_FENCE_FD];
-	int rel_fen_fd[MDP_MAX_FENCE_FD];
-};
-
 
 struct mdp_display_commit {
 	uint32_t flags;
 	uint32_t wait_for_finish;
 	struct fb_var_screeninfo var;
-	struct mdp_buf_fence buf_fence;
 	struct mdp_rect roi;
+};
+
+/**
+* struct mdp_overlay_list - argument for ioctl MSMFB_OVERLAY_PREPARE
+* @num_overlays:	Number of overlay layers as part of the frame.
+* @overlay_list:	Pointer to a list of overlay structures identifying
+*			the layers as part of the frame
+* @flags:		Flags can be used to extend behavior.
+* @processed_overlays:	Output parameter indicating how many pipes were
+*			successful. If there are no errors this number should
+*			match num_overlays. Otherwise it will indicate the last
+*			successful index for overlay that couldn't be set.
+*/
+struct mdp_overlay_list {
+	uint32_t num_overlays;
+	struct mdp_overlay **overlay_list;
+	uint32_t flags;
+	uint32_t processed_overlays;
 };
 
 struct mdp_page_protection {
@@ -899,6 +1076,7 @@ enum {
 
 #ifdef __KERNEL__
 int msm_fb_get_iommu_domain(struct fb_info *info, int domain);
+/* get the framebuffer physical address information */
 int get_fb_phys_info(unsigned long *start, unsigned long *len, int fb_num,
 	int subsys_id);
 struct fb_info *msm_fb_get_writeback_fb(void);
@@ -911,6 +1089,7 @@ int msm_fb_writeback_dequeue_buffer(struct fb_info *info,
 int msm_fb_writeback_stop(struct fb_info *info);
 int msm_fb_writeback_terminate(struct fb_info *info);
 int msm_fb_writeback_set_secure(struct fb_info *info, int enable);
+int msm_fb_writeback_iommu_ref(struct fb_info *info, int enable);
 #endif
 
-#endif 
+#endif /*_MSM_MDP_H_*/

@@ -28,20 +28,9 @@
 #include "mdss_fb.h"
 #include "mdss_dsi.h"
 #include "mdss_panel.h"
-#include "mdp3_ctrl.h"
+#include "mdss_mdp.h"
 
 #define STATUS_CHECK_INTERVAL 5000
-
-/**
- * dsi_status_data - Stores all the data necessary for this module
- * @fb_notif: Used to egister for the fb events
- * @live_status: Delayed worker structure, used to associate the
- * delayed worker function
- * @mfd: Used to store the msm_fb_data_type received when the notifier
- * call back happens
- * @root: Stores the dir created by debuugfs
- * @debugfs_reset_panel: The debugfs variable used to inject errors
- */
 
 struct dsi_status_data {
 	struct notifier_block fb_notifier;
@@ -52,12 +41,21 @@ struct dsi_status_data {
 struct dsi_status_data *pstatus_data;
 static uint32_t interval = STATUS_CHECK_INTERVAL;
 
-void check_dsi_ctrl_status(struct work_struct *work)
+/*
+ * check_dsi_ctrl_status() - Check DSI controller status periodically.
+ * @work  : dsi controller status data
+ *
+ * This function calls check_status API on DSI controller to send the BTA
+ * command. If DSI controller fails to acknowledge the BTA command, it sends
+ * the PANEL_ALIVE=0 status to HAL layer.
+ */
+static void check_dsi_ctrl_status(struct work_struct *work)
 {
 	struct dsi_status_data *pdsi_status = NULL;
 	struct mdss_panel_data *pdata = NULL;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-	struct mdp3_session_data *mdp3_session = NULL;
+	struct mdss_overlay_private *mdp5_data = NULL;
+	struct mdss_mdp_ctl *ctl = NULL;
 	int ret = 0;
 
 	pdsi_status = container_of(to_delayed_work(work),
@@ -72,19 +70,44 @@ void check_dsi_ctrl_status(struct work_struct *work)
 		pr_err("%s: Panel data not available\n", __func__);
 		return;
 	}
+
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 							panel_data);
 	if (!ctrl_pdata || !ctrl_pdata->check_status) {
-		pr_err("%s: DSI ctrl or status_check callback not avilable\n",
+		pr_err("%s: DSI ctrl or status_check callback not available\n",
 								__func__);
 		return;
 	}
-	mdp3_session = pdsi_status->mfd->mdp.private1;
-	mutex_lock(&mdp3_session->lock);
 
+	mdp5_data = mfd_to_mdp5_data(pdsi_status->mfd);
+	ctl = mfd_to_ctl(pdsi_status->mfd);
+
+	if (ctl->shared_lock)
+		mutex_lock(ctl->shared_lock);
+	mutex_lock(&mdp5_data->ov_lock);
+
+	/*
+	 * For the command mode panels, we return pan display
+	 * IOCTL on vsync interrupt. So, after vsync interrupt comes
+	 * and when DMA_P is in progress, if the panel stops responding
+	 * and if we trigger BTA before DMA_P finishes, then the DSI
+	 * FIFO will not be cleared since the DSI data bus control
+	 * doesn't come back to the host after BTA. This may cause the
+	 * display reset not to be proper. Hence, wait for DMA_P done
+	 * for command mode panels before triggering BTA.
+	 */
+	if (ctl->wait_pingpong)
+		ctl->wait_pingpong(ctl, NULL);
+
+	pr_debug("%s: DSI ctrl wait for ping pong done\n", __func__);
+
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 	ret = ctrl_pdata->check_status(ctrl_pdata);
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 
-	mutex_unlock(&mdp3_session->lock);
+	mutex_unlock(&mdp5_data->ov_lock);
+	if (ctl->shared_lock)
+		mutex_unlock(ctl->shared_lock);
 
 	if ((pdsi_status->mfd->panel_power_on)) {
 		if (ret > 0) {
@@ -102,31 +125,31 @@ void check_dsi_ctrl_status(struct work_struct *work)
 	}
 }
 
-/**
- * fb_notifier_callback() - Call back function for the fb_register_client()
- * notifying events
+/*
+ * fb_event_callback() - Call back function for the fb_register_client()
+ *			 notifying events
  * @self  : notifier block
  * @event : The event that was triggered
  * @data  : Of type struct fb_event
  *
- * - This function listens for FB_BLANK_UNBLANK and FB_BLANK_POWERDOWN events
- * - Based on the event the delayed work is either scheduled again after
- * PANEL_STATUS_CHECK_INTERVAL or cancelled
+ * This function listens for FB_BLANK_UNBLANK and FB_BLANK_POWERDOWN events
+ * from frame buffer. DSI status check work is either scheduled again after
+ * PANEL_STATUS_CHECK_INTERVAL or cancelled based on the event.
  */
 static int fb_event_callback(struct notifier_block *self,
 				unsigned long event, void *data)
 {
-	struct fb_event *evdata = (struct fb_event *)data;
+	struct fb_event *evdata = data;
 	struct dsi_status_data *pdata = container_of(self,
 				struct dsi_status_data, fb_notifier);
-	pdata->mfd = (struct msm_fb_data_type *)evdata->info->par;
+	pdata->mfd = evdata->info->par;
 
 	if (event == FB_EVENT_BLANK && evdata) {
 		int *blank = evdata->data;
 		switch (*blank) {
 		case FB_BLANK_UNBLANK:
 			schedule_delayed_work(&pdata->check_status,
-			msecs_to_jiffies(STATUS_CHECK_INTERVAL));
+				msecs_to_jiffies(pdata->check_interval));
 			break;
 		case FB_BLANK_POWERDOWN:
 			cancel_delayed_work(&pdata->check_status);
@@ -138,16 +161,13 @@ static int fb_event_callback(struct notifier_block *self,
 
 int __init mdss_dsi_status_init(void)
 {
-	int rc;
+	int rc = 0;
 
-	pstatus_data = kzalloc(sizeof(struct dsi_status_data),	GFP_KERNEL);
+	pstatus_data = kzalloc(sizeof(struct dsi_status_data), GFP_KERNEL);
 	if (!pstatus_data) {
-		pr_err("%s: can't alloc mem\n", __func__);
-		rc = -ENOMEM;
-		return rc;
+		pr_err("%s: can't allocate memory\n", __func__);
+		return -ENOMEM;
 	}
-
-	memset(pstatus_data, 0, sizeof(struct dsi_status_data));
 
 	pstatus_data->fb_notifier.notifier_call = fb_event_callback;
 
@@ -160,11 +180,11 @@ int __init mdss_dsi_status_init(void)
 	}
 
 	pstatus_data->check_interval = interval;
-	pr_info("%s: DSI status check interval:%d\n", __func__, interval);
+	pr_info("%s: DSI status check interval:%d\n", __func__,	interval);
 
 	INIT_DELAYED_WORK(&pstatus_data->check_status, check_dsi_ctrl_status);
 
-	pr_debug("%s: DSI ctrl status thread initialized\n", __func__);
+	pr_debug("%s: DSI ctrl status work queue initialized\n", __func__);
 
 	return rc;
 }
@@ -174,13 +194,13 @@ void __exit mdss_dsi_status_exit(void)
 	fb_unregister_client(&pstatus_data->fb_notifier);
 	cancel_delayed_work_sync(&pstatus_data->check_status);
 	kfree(pstatus_data);
-	pr_debug("%s: DSI ctrl status thread removed\n", __func__);
+	pr_debug("%s: DSI ctrl status work queue removed\n", __func__);
 }
 
 module_param(interval, uint, 0);
 MODULE_PARM_DESC(interval,
-	"Duration in milliseconds to send BTA command for checking"
-	"DSI status periodically");
+		"Duration in milliseconds to send BTA command for checking"
+		"DSI status periodically");
 
 module_init(mdss_dsi_status_init);
 module_exit(mdss_dsi_status_exit);

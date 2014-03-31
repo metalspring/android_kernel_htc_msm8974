@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -18,6 +18,10 @@
 
 #include "mdss_mdp.h"
 
+	/*
+	 * number of bits for source component,
+	 * 0 = 1 bit, 1 = 2 bits, 2 = 6 bits, 3 = 8 bits
+	 */
 enum {
 	COLOR_4BIT,
 	COLOR_5BIT,
@@ -77,6 +81,25 @@ enum {
 		},						\
 	}
 
+#define FMT_RGB_8888_TILE(fmt, alpha_en, e0, e1, e2, e3)	\
+	{							\
+		.format = (fmt),				\
+		.fetch_planes = MDSS_MDP_PLANE_INTERLEAVED,	\
+		.unpack_tight = 1,				\
+		.unpack_align_msb = 0,				\
+		.alpha_enable = (alpha_en),			\
+		.unpack_count = 4,				\
+		.bpp = 4,					\
+		.tile = 1,					\
+		.element = { (e0), (e1), (e2), (e3) },		\
+		.bits = {					\
+			[C3_ALPHA] = COLOR_8BIT,		\
+			[C2_R_Cr] = COLOR_8BIT,			\
+			[C0_G_Y] = COLOR_8BIT,			\
+			[C1_B_Cb] = COLOR_8BIT,			\
+		},						\
+	}
+
 #define FMT_YUV_COMMON(fmt)					\
 		.format = (fmt),				\
 		.is_yuv = 1,					\
@@ -121,6 +144,22 @@ static struct mdss_mdp_format_params mdss_mdp_format_map[] = {
 	FMT_RGB_8888(MDP_RGBX_8888, 0, C2_R_Cr, C0_G_Y, C1_B_Cb, C3_ALPHA),
 	FMT_RGB_8888(MDP_BGRA_8888, 1, C1_B_Cb, C0_G_Y, C2_R_Cr, C3_ALPHA),
 	FMT_RGB_8888(MDP_BGRX_8888, 0, C1_B_Cb, C0_G_Y, C2_R_Cr, C3_ALPHA),
+	FMT_RGB_8888_TILE(MDP_RGBA_8888_TILE, 1, C2_R_Cr, C0_G_Y, C1_B_Cb,
+			C3_ALPHA),
+	FMT_RGB_8888_TILE(MDP_ARGB_8888_TILE, 1, C3_ALPHA, C2_R_Cr, C0_G_Y,
+			C1_B_Cb),
+	FMT_RGB_8888_TILE(MDP_ABGR_8888_TILE, 1, C3_ALPHA, C1_B_Cb, C0_G_Y,
+			C2_R_Cr),
+	FMT_RGB_8888_TILE(MDP_BGRA_8888_TILE, 1, C1_B_Cb, C0_G_Y, C2_R_Cr,
+			C3_ALPHA),
+	FMT_RGB_8888_TILE(MDP_RGBX_8888_TILE, 0, C2_R_Cr, C0_G_Y, C1_B_Cb,
+			C3_ALPHA),
+	FMT_RGB_8888_TILE(MDP_XRGB_8888_TILE, 0, C3_ALPHA, C2_R_Cr, C0_G_Y,
+			C1_B_Cb),
+	FMT_RGB_8888_TILE(MDP_XBGR_8888_TILE, 0, C3_ALPHA, C1_B_Cb, C0_G_Y,
+			C2_R_Cr),
+	FMT_RGB_8888_TILE(MDP_BGRX_8888_TILE, 0, C1_B_Cb, C0_G_Y, C2_R_Cr,
+			C3_ALPHA),
 
 	FMT_YUV_PSEUDO(MDP_Y_CRCB_H1V1, MDSS_MDP_CHROMA_RGB, C2_R_Cr, C1_B_Cb),
 	FMT_YUV_PSEUDO(MDP_Y_CBCR_H1V1, MDSS_MDP_CHROMA_RGB, C1_B_Cb, C2_R_Cr),

@@ -36,6 +36,8 @@
 #define MDP_PPP_MAX_BPP 4
 #define MDP_PPP_DYNAMIC_FACTOR 3
 #define MDP_PPP_MAX_READ_WRITE 3
+#define ENABLE_SOLID_FILL	0x2
+#define DISABLE_SOLID_FILL	0x0
 
 static const bool valid_fmt[MDP_IMGTYPE_LIMIT] = {
 	[MDP_RGB_565] = true,
@@ -81,13 +83,11 @@ struct blit_req_queue {
 };
 
 struct ppp_status {
-	int busy;
 	bool wait_for_pop;
-	spinlock_t ppp_lock;
 	struct completion ppp_comp;
 	struct completion pop_q_comp;
-	struct mutex req_mutex; 
-	struct mutex config_ppp_mutex; 
+	struct mutex req_mutex; /* Protect request queue */
+	struct mutex config_ppp_mutex; /* Only one client configure register */
 	struct msm_fb_data_type *mfd;
 
 	struct work_struct blit_work;
@@ -99,6 +99,7 @@ struct ppp_status {
 	struct timer_list free_bw_timer;
 	struct work_struct free_bw_work;
 	bool bw_on;
+	bool bw_optimal;
 };
 
 static struct ppp_status *ppp_stat;
@@ -138,6 +139,7 @@ int mdp3_ppp_get_img(struct mdp_img *img, struct mdp_blit_req *req,
 	return mdp3_get_img(&fb_data, data, MDP3_CLIENT_PPP);
 }
 
+/* Check format */
 int mdp3_ppp_verify_fmt(struct mdp_blit_req *req)
 {
 	if (MDP_IS_IMGTYPE_BAD(req->src.format) ||
@@ -154,6 +156,7 @@ int mdp3_ppp_verify_fmt(struct mdp_blit_req *req)
 	return 0;
 }
 
+/* Check resolution */
 int mdp3_ppp_verify_res(struct mdp_blit_req *req)
 {
 	if ((req->src.width == 0) || (req->src.height == 0) ||
@@ -178,6 +181,7 @@ int mdp3_ppp_verify_res(struct mdp_blit_req *req)
 	return 0;
 }
 
+/* scaling range check */
 int mdp3_ppp_verify_scale(struct mdp_blit_req *req)
 {
 	u32 src_width, src_height, dst_width, dst_height;
@@ -231,6 +235,7 @@ int mdp3_ppp_verify_scale(struct mdp_blit_req *req)
 	return 0;
 }
 
+/* operation check */
 int mdp3_ppp_verify_op(struct mdp_blit_req *req)
 {
 	if (req->flags & MDP_DEINTERLACE) {
@@ -265,20 +270,16 @@ int mdp3_ppp_verify_req(struct mdp_blit_req *req)
 int mdp3_ppp_pipe_wait(void)
 {
 	int ret = 1;
-	int wait;
-	unsigned long flag;
 
-	spin_lock_irqsave(&ppp_stat->ppp_lock, flag);
-	wait = ppp_stat->busy;
-	spin_unlock_irqrestore(&ppp_stat->ppp_lock, flag);
-
-	if (wait) {
-		ret = wait_for_completion_interruptible_timeout(
-		   &ppp_stat->ppp_comp, 5 * HZ);
-		if (!ret)
-			pr_err("%s: Timed out waiting for the MDP.\n",
-				__func__);
-	}
+	/*
+	 * wait 40 ms for ppp operation to complete before declaring
+	 * the MDP hung
+	 */
+	ret = wait_for_completion_timeout(
+	  &ppp_stat->ppp_comp, msecs_to_jiffies(40));
+	if (!ret)
+		pr_err("%s: Timed out waiting for the MDP.\n",
+			__func__);
 
 	return ret;
 }
@@ -291,7 +292,7 @@ uint32_t mdp3_calc_tpval(struct ppp_img_desc *img, uint32_t old_tp)
 	tpVal = 0;
 	if ((img->color_fmt == MDP_RGB_565)
 	    || (img->color_fmt == MDP_BGR_565)) {
-		
+		/* transparent color conversion into 24 bpp */
 		plane_tp = (uint8_t) ((old_tp & 0xF800) >> 11);
 		tpVal |= ((plane_tp << 3) | ((plane_tp & 0x1C) >> 2)) << 16;
 		plane_tp = (uint8_t) (old_tp & 0x1F);
@@ -300,7 +301,7 @@ uint32_t mdp3_calc_tpval(struct ppp_img_desc *img, uint32_t old_tp)
 		plane_tp = (uint8_t) ((old_tp & 0x7E0) >> 5);
 		tpVal |= ((plane_tp << 2) | ((plane_tp & 0x30) >> 4));
 	} else {
-		
+		/* 24bit RGB to RBG conversion */
 		tpVal = (old_tp & 0xFF00) >> 8;
 		tpVal |= (old_tp & 0xFF) << 8;
 		tpVal |= (old_tp & 0xFF0000);
@@ -311,11 +312,7 @@ uint32_t mdp3_calc_tpval(struct ppp_img_desc *img, uint32_t old_tp)
 
 static void mdp3_ppp_intr_handler(int type, void *arg)
 {
-	spin_lock(&ppp_stat->ppp_lock);
-	ppp_stat->busy = false;
-	spin_unlock(&ppp_stat->ppp_lock);
 	complete(&ppp_stat->ppp_comp);
-	mdp3_irq_disable_nosync(type);
 }
 
 static int mdp3_ppp_callback_setup(void)
@@ -332,44 +329,71 @@ static int mdp3_ppp_callback_setup(void)
 
 void mdp3_ppp_kickoff(void)
 {
-	unsigned long flag;
-	mdp3_irq_enable(MDP3_PPP_DONE);
-
 	init_completion(&ppp_stat->ppp_comp);
-
-	spin_lock_irqsave(&ppp_stat->ppp_lock, flag);
-	ppp_stat->busy = true;
-	spin_unlock_irqrestore(&ppp_stat->ppp_lock, flag);
+	mdp3_irq_enable(MDP3_PPP_DONE);
 	ppp_enable();
-
 	mdp3_ppp_pipe_wait();
+	mdp3_irq_disable(MDP3_PPP_DONE);
+}
+
+int mdp3_ppp_vote_update(struct msm_fb_data_type *mfd)
+{
+	struct mdss_panel_info *panel_info = mfd->panel_info;
+	uint64_t req_bw = 0, ab = 0, ib = 0;
+	int rate = 0;
+	int rc = 0;
+	if (!ppp_stat->bw_on)
+		pr_err("%s: PPP vote update in wrong state\n", __func__);
+
+	rate = MDP_BLIT_CLK_RATE;
+	req_bw = panel_info->xres * panel_info->yres *
+		panel_info->mipi.frame_rate *
+		MDP_PPP_MAX_BPP *
+		MDP_PPP_DYNAMIC_FACTOR *
+		MDP_PPP_MAX_READ_WRITE;
+	ib = (req_bw * 3) / 2;
+
+	if (ppp_stat->bw_optimal)
+		ab = ib / 2;
+	else
+		ab = req_bw;
+	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
+	if (rc < 0) {
+		pr_err("%s: scale_set_quota failed\n", __func__);
+		return rc;
+	}
+	return rc;
 }
 
 int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 {
 	struct mdss_panel_info *panel_info = mfd->panel_info;
-	uint64_t ab = 0, ib = 0;
+	uint64_t req_bw = 0, ab = 0, ib = 0;
 	int rate = 0;
 	int rc;
 
 	if (on_off) {
 		rate = MDP_BLIT_CLK_RATE;
-		ab = panel_info->xres * panel_info->yres *
+		req_bw = panel_info->xres * panel_info->yres *
 			panel_info->mipi.frame_rate *
 			MDP_PPP_MAX_BPP *
 			MDP_PPP_DYNAMIC_FACTOR *
 			MDP_PPP_MAX_READ_WRITE;
-		ib = (ab * 3) / 2;
+		ib = (req_bw * 3) / 2;
+		if (ppp_stat->bw_optimal)
+			ab = ib / 2;
+		else
+			ab = req_bw;
 	}
 	mdp3_clk_set_rate(MDP3_CLK_CORE, rate, MDP3_CLIENT_PPP);
-	rc = mdp3_clk_enable(on_off);
+	rc = mdp3_clk_enable(on_off, 0);
 	if (rc < 0) {
 		pr_err("%s: mdp3_clk_enable failed\n", __func__);
 		return rc;
 	}
 	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
 	if (rc < 0) {
-		mdp3_clk_enable(!on_off);
+		mdp3_clk_enable(!on_off, 0);
 		pr_err("%s: scale_set_quota failed\n", __func__);
 		return rc;
 	}
@@ -377,20 +401,83 @@ int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 	return 0;
 }
 
+bool mdp3_optimal_bw(int req_cnt)
+{
+	if (req_cnt == 1 && ppp_stat->req_q.count == 1)
+		return true;
+	return false;
+}
+
 void mdp3_start_ppp(struct ppp_blit_op *blit_op)
 {
-	
-	do { } while (mdp3_ppp_pipe_wait() <= 0);
+	/* Wait for the pipe to clear */
+	if (MDP3_REG_READ(MDP3_REG_DISPLAY_STATUS) &
+			MDP3_PPP_ACTIVE) {
+		pr_err("ppp core is hung up on previous request\n");
+		return;
+	}
 	config_ppp_op_mode(blit_op);
+	if (blit_op->solid_fill) {
+		MDP3_REG_WRITE(0x10138, 0x10000000);
+		MDP3_REG_WRITE(0x1014c, 0xffffffff);
+		MDP3_REG_WRITE(0x101b8, 0);
+		MDP3_REG_WRITE(0x101bc, 0);
+		MDP3_REG_WRITE(0x1013c, 0);
+		MDP3_REG_WRITE(0x10140, 0);
+		MDP3_REG_WRITE(0x10144, 0);
+		MDP3_REG_WRITE(0x10148, 0);
+		MDP3_REG_WRITE(MDP3_TFETCH_FILL_COLOR,
+					blit_op->solid_fill_color);
+		MDP3_REG_WRITE(MDP3_TFETCH_SOLID_FILL,
+					ENABLE_SOLID_FILL);
+	} else {
+		MDP3_REG_WRITE(MDP3_TFETCH_SOLID_FILL,
+					DISABLE_SOLID_FILL);
+	}
 	mdp3_ppp_kickoff();
 }
 
-static void mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
+static int solid_fill_workaround(struct mdp_blit_req *req,
+						struct ppp_blit_op *blit_op)
+{
+	/* Make width 2 when there is a solid fill of width 1, and make
+	sure width does not become zero while trying to avoid odd width */
+	if (blit_op->dst.roi.width == 1) {
+		if (req->dst_rect.x + 2 > req->dst.width) {
+			pr_err("%s: Unable to handle solid fill of width 1",
+								__func__);
+			return -EINVAL;
+		}
+		blit_op->dst.roi.width = 2;
+	}
+	if (blit_op->src.roi.width == 1) {
+		if (req->src_rect.x + 2 > req->src.width) {
+			pr_err("%s: Unable to handle solid fill of width 1",
+								__func__);
+			return -EINVAL;
+		}
+		blit_op->src.roi.width = 2;
+	}
+
+	/* Avoid odd width, as it could hang ppp during solid fill */
+	blit_op->dst.roi.width = (blit_op->dst.roi.width / 2) * 2;
+	blit_op->src.roi.width = (blit_op->src.roi.width / 2) * 2;
+
+	/* Avoid RGBA format, as it could hang ppp during solid fill */
+	if (blit_op->src.color_fmt == MDP_RGBA_8888)
+		blit_op->src.color_fmt = MDP_RGBX_8888;
+	if (blit_op->dst.color_fmt == MDP_RGBA_8888)
+		blit_op->dst.color_fmt = MDP_RGBX_8888;
+	return 0;
+}
+
+static int mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
 	struct mdp_blit_req *req, struct mdp3_img_data *src_data,
 	struct mdp3_img_data *dst_data)
 {
 	unsigned long srcp0_start, srcp0_len, dst_start, dst_len;
 	uint32_t dst_width, dst_height;
+	int ret = 0;
 
 	srcp0_start = (unsigned long) src_data->addr;
 	srcp0_len = (unsigned long) src_data->len;
@@ -436,7 +523,7 @@ static void mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
 	if (req->flags & MDP_IS_FG)
 		blit_op->mdp_op |= MDPOP_LAYER_IS_FG;
 
-	
+	/* blending check */
 	if (req->transp_mask != MDP_TRANSP_NOP) {
 		blit_op->mdp_op |= MDPOP_TRANSP;
 		blit_op->blend.trans_color =
@@ -453,7 +540,7 @@ static void mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
 		blit_op->blend.const_alpha = 0xff;
 	}
 
-	
+	/* rotation check */
 	if (req->flags & MDP_FLIP_LR)
 		blit_op->mdp_op |= MDPOP_LR;
 	if (req->flags & MDP_FLIP_UD)
@@ -466,7 +553,7 @@ static void mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
 	if (req->flags & MDP_BLEND_FG_PREMULT)
 		blit_op->mdp_op |= MDPOP_FG_PM_ALPHA;
 
-	
+	/* scale check */
 	if (req->flags & MDP_ROT_90) {
 		dst_width = req->dst_rect.h;
 		dst_height = req->dst_rect.w;
@@ -481,6 +568,21 @@ static void mdp3_ppp_process_req(struct ppp_blit_op *blit_op,
 
 	if (req->flags & MDP_BLUR)
 		blit_op->mdp_op |= MDPOP_ASCALE | MDPOP_BLUR;
+
+	if (req->flags & MDP_SOLID_FILL) {
+		ret = solid_fill_workaround(req, blit_op);
+		if (ret)
+			return ret;
+
+		blit_op->solid_fill_color = (req->const_color.g & 0xFF)|
+				(req->const_color.r & 0xFF) << 8 |
+				(req->const_color.b & 0xFF)  << 16 |
+				(req->const_color.alpha & 0xFF) << 24;
+		blit_op->solid_fill = true;
+	} else {
+		blit_op->solid_fill = false;
+	}
+	return ret;
 }
 
 static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
@@ -494,14 +596,14 @@ static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
 
 	src_w = req->src_rect.w;
 	dst_h = blit_op->dst.roi.height;
-	
+	/* bg tile fetching HW workaround */
 	for (i = 0; i < (req->dst_rect.h / 16); i++) {
-		
+		/* this tile size */
 		blit_op->dst.roi.height = 16;
 		blit_op->src.roi.width =
 			(16 * req->src_rect.w) / req->dst_rect.h;
 
-		
+		/* if it's out of scale range... */
 		if (((MDP_SCALE_Q_FACTOR * blit_op->dst.roi.height) /
 			 blit_op->src.roi.width) > MDP_MAX_X_SCALE_FACTOR)
 			blit_op->src.roi.width =
@@ -515,11 +617,11 @@ static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
 
 		mdp3_start_ppp(blit_op);
 
-		
+		/* next tile location */
 		blit_op->dst.roi.y += 16;
 		blit_op->src.roi.x += blit_op->src.roi.width;
 
-		
+		/* this is for a remainder update */
 		dst_h -= 16;
 		src_w -= blit_op->src.roi.width;
 		/* restore parameters that may have been overwritten */
@@ -534,7 +636,7 @@ static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
 			("msm_fb: mdp_blt_ex() unexpected result! line:%d\n",
 			 __LINE__);
 
-	
+	/* remainder update */
 	if ((dst_h > 0) && (src_w > 0)) {
 		u32 tmp_v;
 
@@ -550,7 +652,7 @@ static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
 				blit_op->dst.roi.height) %
 				MDP_MAX_X_SCALE_FACTOR ? 1 : 0);
 
-			
+			/* move x location as roi width gets bigger */
 			blit_op->src.roi.x -= tmp_v - blit_op->src.roi.width;
 			blit_op->src.roi.width = tmp_v;
 		} else if (((MDP_SCALE_Q_FACTOR * blit_op->dst.roi.height) /
@@ -562,6 +664,10 @@ static void mdp3_ppp_tile_workaround(struct ppp_blit_op *blit_op,
 				blit_op->dst.roi.height) %
 				MDP_MIN_X_SCALE_FACTOR ? 1 : 0);
 
+			/*
+			 * we don't move x location for continuity of
+			 * source image
+			 */
 			blit_op->src.roi.width = tmp_v;
 		}
 
@@ -575,6 +681,7 @@ static int mdp3_ppp_blit(struct msm_fb_data_type *mfd,
 	struct mdp3_img_data *dst_data)
 {
 	struct ppp_blit_op blit_op;
+	int ret = 0;
 
 	memset(&blit_op, 0, sizeof(blit_op));
 
@@ -588,7 +695,11 @@ static int mdp3_ppp_blit(struct msm_fb_data_type *mfd,
 		return -EINVAL;
 	}
 
-	mdp3_ppp_process_req(&blit_op, req, src_data, dst_data);
+	ret = mdp3_ppp_process_req(&blit_op, req, src_data, dst_data);
+	if (ret) {
+		pr_err("%s: Failed to process the blit request", __func__);
+		return ret;
+	}
 
 	if (((blit_op.mdp_op & (MDPOP_TRANSP | MDPOP_ALPHAB)) ||
 	     (req->src.format == MDP_ARGB_8888) ||
@@ -613,10 +724,10 @@ static int mdp3_ppp_blit_workaround(struct msm_fb_data_type *mfd,
 	int s_x_0, s_x_1, s_w_0, s_w_1, s_y_0, s_y_1, s_h_0, s_h_1;
 	int d_x_0, d_x_1, d_w_0, d_w_1, d_y_0, d_y_1, d_h_0, d_h_1;
 
-	
+	/* make new request as provide by user */
 	splitreq = *req;
 
-	
+	/* break dest roi at width*/
 	d_y_0 = d_y_1 = req->dst_rect.y;
 	d_h_0 = d_h_1 = req->dst_rect.h;
 	d_x_0 = req->dst_rect.x;
@@ -628,7 +739,7 @@ static int mdp3_ppp_blit_workaround(struct msm_fb_data_type *mfd,
 
 	d_w_0 = req->dst_rect.w - d_w_1;
 	d_x_1 = d_x_0 + d_w_0;
-	
+	/* blit first region */
 	if (((splitreq.flags & 0x07) == 0x07) ||
 		((splitreq.flags & 0x07) == 0x05) ||
 		((splitreq.flags & 0x07) == 0x02) ||
@@ -704,12 +815,12 @@ static int mdp3_ppp_blit_workaround(struct msm_fb_data_type *mfd,
 		splitreq.dst_rect.w = d_w_1;
 	}
 
-	
+	/* No need to split in height */
 	ret = mdp3_ppp_blit(mfd, &splitreq, src_data, dst_data);
 
 	if (ret)
 		return ret;
-	
+	/* blit second region */
 	if (((splitreq.flags & 0x07) == 0x07) ||
 		((splitreq.flags & 0x07) == 0x05) ||
 		((splitreq.flags & 0x07) == 0x02) ||
@@ -733,7 +844,7 @@ static int mdp3_ppp_blit_workaround(struct msm_fb_data_type *mfd,
 		splitreq.dst_rect.w = d_w_0;
 	}
 
-	
+	/* No need to split in height ... just width */
 	return mdp3_ppp_blit(mfd, &splitreq, src_data, dst_data);
 }
 
@@ -770,7 +881,7 @@ int mdp3_ppp_start_blit(struct msm_fb_data_type *mfd,
 		}
 	}
 
-	
+	/* MDP width split workaround */
 	remainder = (req->dst_rect.w) % 16;
 	ret = ppp_get_bpp(req->dst.format, mfd->fb_imgType);
 	if (ret <= 0) {
@@ -779,9 +890,10 @@ int mdp3_ppp_start_blit(struct msm_fb_data_type *mfd,
 	}
 	is_bpp_4 = (ret == 4) ? 1 : 0;
 
-	if ((is_bpp_4 && (remainder == 6 || remainder == 14)))
+	if ((is_bpp_4 && (remainder == 6 || remainder == 14)) &&
+						!(req->flags & MDP_SOLID_FILL))
 		ret = mdp3_ppp_blit_workaround(mfd, req, remainder,
-				src_data, dst_data);
+							src_data, dst_data);
 	else
 		ret = mdp3_ppp_blit(mfd, req, src_data, dst_data);
 	return ret;
@@ -790,7 +902,7 @@ int mdp3_ppp_start_blit(struct msm_fb_data_type *mfd,
 void mdp3_ppp_wait_for_fence(struct blit_req_list *req)
 {
 	int i, ret = 0;
-	
+	/* buf sync */
 	for (i = 0; i < req->acq_fen_cnt; i++) {
 		ret = sync_fence_wait(req->acq_fen[i],
 				WAIT_FENCE_FINAL_TIMEOUT);
@@ -875,7 +987,7 @@ static int mdp3_ppp_handle_buf_sync(struct blit_req_list *req,
 		ret = -ENOMEM;
 		goto buf_sync_err_2;
 	}
-	
+	/* create fence */
 	req->cur_rel_fence = sync_fence_create("ppp-fence",
 			req->cur_rel_sync_pt);
 	if (req->cur_rel_fence == NULL) {
@@ -885,7 +997,7 @@ static int mdp3_ppp_handle_buf_sync(struct blit_req_list *req,
 		ret = -ENOMEM;
 		goto buf_sync_err_2;
 	}
-	
+	/* create fd */
 	return ret;
 buf_sync_err_2:
 	ppp_stat->timeline_value--;
@@ -959,6 +1071,7 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 			pr_err("%s: mdp3_iommu_enable failed\n", __func__);
 			return;
 		}
+		ppp_stat->bw_optimal = mdp3_optimal_bw(req->count);
 		mdp3_ppp_turnon(mfd, 1);
 		if (rc < 0) {
 			mdp3_iommu_disable(MDP3_CLIENT_PPP);
@@ -971,7 +1084,7 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 		mdp3_ppp_wait_for_fence(req);
 		for (i = 0; i < req->count; i++) {
 			if (!(req->req_list[i].flags & MDP_NO_BLIT)) {
-				
+				/* Do the actual blit. */
 				if (!rc) {
 					rc = mdp3_ppp_start_blit(mfd,
 						&(req->req_list[i]),
@@ -984,7 +1097,7 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 					MDP3_CLIENT_PPP);
 			}
 		}
-		
+		/* Signal to release fence */
 		mutex_lock(&ppp_stat->req_mutex);
 		mdp3_ppp_signal_timeline(req);
 		mdp3_ppp_req_pop(&ppp_stat->req_q);
@@ -992,6 +1105,10 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 		if (ppp_stat->wait_for_pop)
 			complete(&ppp_stat->pop_q_comp);
 		mutex_unlock(&ppp_stat->req_mutex);
+		if (req && (ppp_stat->bw_optimal != mdp3_optimal_bw(req->count))) {
+			ppp_stat->bw_optimal = !ppp_stat->bw_optimal;
+			mdp3_ppp_vote_update(mfd);
+		}
 	}
 	mod_timer(&ppp_stat->free_bw_timer, jiffies +
 		msecs_to_jiffies(MDP_RELEASE_BW_TIMEOUT));
@@ -1012,10 +1129,10 @@ int mdp3_ppp_parse_req(void __user *p,
 	while (req_q->count >= MDP3_PPP_MAX_LIST_REQ) {
 		ppp_stat->wait_for_pop = true;
 		mutex_unlock(&ppp_stat->req_mutex);
-		rc = wait_for_completion_interruptible_timeout(
+		rc = wait_for_completion_timeout(
 		   &ppp_stat->pop_q_comp, 5 * HZ);
 		if (rc == 0) {
-			
+			/* This will only occur if there is serious problem */
 			pr_err("%s: timeout exiting queuing request\n",
 				   __func__);
 			return -EBUSY;
@@ -1040,7 +1157,7 @@ int mdp3_ppp_parse_req(void __user *p,
 	}
 	req->count = count;
 
-	
+	/* We need to grab ion handle while running in client thread */
 	for (i = 0; i < count; i++) {
 		rc = mdp3_ppp_get_img(&req->req_list[i].src,
 				&req->req_list[i], &req->src_data[i]);
@@ -1080,7 +1197,7 @@ int mdp3_ppp_parse_req(void __user *p,
 	mutex_unlock(&ppp_stat->req_mutex);
 	schedule_work(&ppp_stat->blit_work);
 	if (!async) {
-		
+		/* wait for release fence */
 		rc = sync_fence_wait(fence,
 				5 * MSEC_PER_SEC);
 		if (rc < 0)
@@ -1112,7 +1229,7 @@ int mdp3_ppp_res_init(struct msm_fb_data_type *mfd)
 		return -ENOMEM;
 	}
 
-	
+	/*Setup sync_pt timeline for ppp*/
 	ppp_stat->timeline = sw_sync_timeline_create(timeline_name);
 	if (ppp_stat->timeline == NULL) {
 		pr_err("%s: cannot create time line\n", __func__);
@@ -1124,13 +1241,11 @@ int mdp3_ppp_res_init(struct msm_fb_data_type *mfd)
 	INIT_WORK(&ppp_stat->blit_work, mdp3_ppp_blit_wq_handler);
 	INIT_WORK(&ppp_stat->free_bw_work, mdp3_free_bw_wq_handler);
 	init_completion(&ppp_stat->pop_q_comp);
-	spin_lock_init(&ppp_stat->ppp_lock);
 	mutex_init(&ppp_stat->req_mutex);
 	mutex_init(&ppp_stat->config_ppp_mutex);
 	init_timer(&ppp_stat->free_bw_timer);
 	ppp_stat->free_bw_timer.function = mdp3_free_fw_timer_func;
 	ppp_stat->free_bw_timer.data = 0;
-	ppp_stat->busy = false;
 	ppp_stat->mfd = mfd;
 	mdp3_ppp_callback_setup();
 	return 0;
