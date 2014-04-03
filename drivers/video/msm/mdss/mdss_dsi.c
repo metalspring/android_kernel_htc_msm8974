@@ -51,6 +51,12 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 		pr_info("%s: no dsi_regulator_init function is specified\n", __func__);
 	}
 
+	if (pwrctrl_pdata.dsi_regulator_init) {
+		return pwrctrl_pdata.dsi_regulator_init(pdev);
+	} else {
+		pr_info("%s: no dsi_regulator_init function is specified\n", __func__);
+	}
+
 	return msm_dss_config_vreg(&pdev->dev,
 			ctrl_pdata->power_data.vreg_config,
 			ctrl_pdata->power_data.num_vreg, 1);
@@ -70,6 +76,10 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 	pr_debug("%s: enable=%d\n", __func__, enable);
+
+	if (pwrctrl_pdata.dsi_power_on) {
+		return pwrctrl_pdata.dsi_power_on(pdata, !!enable);
+	}
 
 	if (pwrctrl_pdata.dsi_power_on) {
 		return pwrctrl_pdata.dsi_power_on(pdata, !!enable);
