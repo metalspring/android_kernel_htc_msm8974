@@ -27,6 +27,7 @@
 #include <linux/types.h>
 #include <linux/elf-em.h>
 #include <linux/ptrace.h>
+#include <linux/uidgid.h>
 
 #define AUDIT_GET		1000	
 #define AUDIT_SET		1001	
@@ -377,6 +378,8 @@ struct audit_krule {
 struct audit_field {
 	u32				type;
 	u32				val;
+	kuid_t				uid;
+	kgid_t				gid;
 	u32				op;
 	char				*lsm_str;
 	void				*lsm_rule;
