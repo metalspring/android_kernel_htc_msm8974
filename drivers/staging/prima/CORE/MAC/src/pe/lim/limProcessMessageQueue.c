@@ -229,10 +229,17 @@ limDeferMsg(tpAniSirGlobal pMac, tSirMsgQ *pMsg)
 
     if (retCode == TX_SUCCESS)
     {
+        limLog(pMac, LOG1,
+               FL("Deferred message(0x%X) limSmeState %d (prev sme state %d)"
+                  " sysRole %d mlm state %d (prev mlm state %d)"),
+               pMsg->type, pMac->lim.gLimSmeState, pMac->lim.gLimPrevSmeState,
+               pMac->lim.gLimSystemRole, pMac->lim.gLimMlmState,
+               pMac->lim.gLimPrevMlmState);
         MTRACE(macTraceMsgRx(pMac, NO_SESSION, LIM_TRACE_MAKE_RXMSG(pMsg->type, LIM_MSG_DEFERRED));)
     }
     else
     {
+        limLog(pMac, LOGE, FL("Dropped lim message (0x%X)"), pMsg->type);
         MTRACE(macTraceMsgRx(pMac, NO_SESSION, LIM_TRACE_MAKE_RXMSG(pMsg->type, LIM_MSG_DROPPED));)
     }
 
@@ -862,6 +869,7 @@ eHalStatus limSendStopScanOffloadReq(tpAniSirGlobal pMac)
         return eHAL_STATUS_FAILURE;
     }
 
+    limLog(pMac, LOG1, FL("Abort ongoing offload scan."));
     return eHAL_STATUS_SUCCESS;
 
 }
@@ -1135,27 +1143,33 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
 
         case WDA_INIT_SCAN_RSP:
             limProcessInitScanRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 
         case WDA_START_SCAN_RSP:
             limProcessStartScanRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 
         case WDA_END_SCAN_RSP:
             limProcessEndScanRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 
         case WDA_FINISH_SCAN_RSP:
             limProcessFinishScanRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 #ifdef FEATURE_OEM_DATA_SUPPORT
         case WDA_START_OEM_DATA_RSP:
             limProcessOemDataRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 #endif
 
         case WDA_SWITCH_CHANNEL_RSP:
             limProcessSwitchChannelRsp(pMac, limMsg->bodyptr);
+            limMsg->bodyptr = NULL;
             break;
 
 #ifdef ANI_SIR_IBSS_PEER_CACHING
@@ -1477,13 +1491,9 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
                         vos_mem_copy(&psessionEntry->p2pGoPsUpdate, limMsg->bodyptr,
                                      sizeof(tSirP2PNoaAttr));
 
-                        limLog(pMac, LOG2, FL(" &psessionEntry->bssId%02x:%02x:%02x:%02x:%02x:%02x ctWin=%d oppPsFlag=%d"),
-                                     psessionEntry->bssId[0],
-                                     psessionEntry->bssId[1],
-                                     psessionEntry->bssId[2],
-                                     psessionEntry->bssId[3],
-                                     psessionEntry->bssId[4],
-                                     psessionEntry->bssId[5],
+                        limLog(pMac, LOG2, FL(" &psessionEntry->bssId "
+                                     MAC_ADDRESS_STR " ctWin=%d oppPsFlag=%d"),
+                                     MAC_ADDR_ARRAY(psessionEntry->bssId),
                                      psessionEntry->p2pGoPsUpdate.ctWin,
                                      psessionEntry->p2pGoPsUpdate.oppPsFlag);
 
@@ -1659,26 +1669,6 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             }
             else
             {
-#if defined(FEATURE_WLAN_TDLS) && defined(FEATURE_WLAN_TDLS_OXYGEN_DISAPPEAR_AP)
-                 tpPESession psessionEntry = &pMac->lim.gpSession[0];
-                 for (i=0; i < pMac->lim.maxBssId; i++)
-                 {
-                     psessionEntry = &pMac->lim.gpSession[i];
-                     if ((psessionEntry != NULL) && (psessionEntry->valid) &&
-                         ((psessionEntry->pePersona == VOS_P2P_CLIENT_MODE) ||
-                         (psessionEntry->pePersona == VOS_STA_MODE)))
-                     {
-                         if ((TRUE == pMac->lim.gLimTDLSOxygenSupport) &&
-                             (limGetTDLSPeerCount(pMac, psessionEntry) != 0)) {
-                             if (limMsg->bodyptr) {
-                                 vos_mem_free(limMsg->bodyptr);
-                                 limMsg->bodyptr = NULL;
-                             }
-                             return;
-                         }
-                     }
-                 }
-#endif
                  if (NULL == limMsg->bodyptr)
                  {
                      limHandleHeartBeatTimeout(pMac);
@@ -1814,15 +1804,8 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_ERROR,
                                 ("TDLS setup rsp timer expires ")) ;
             VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_INFO,
-                       ("TDLS setup rsp timer expires for peer:")) ;
-            VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_INFO,
-                    ("%02X, %02X, %02X,%02X, %02X, %02X"),
-                                    peerMac[0],
-                                    peerMac[1],
-                                    peerMac[2],
-                                    peerMac[3],
-                                    peerMac[4],
-                                    peerMac[5]);
+                      ("TDLS setup rsp timer expires for peer:"
+                      MAC_ADDRESS_STR), MAC_ADDR_ARRAY(peerMac));
 
             limTdlsFindLinkPeer(pMac, peerMac, &setupPeer) ;
             if(NULL != setupPeer)
@@ -1842,15 +1825,8 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
             VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_ERROR,
                                 ("TDLS setup CNF timer expires ")) ;
             VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_INFO,
-                      ("TDLS setup CNF timer expires for peer:")) ;
-            VOS_TRACE(VOS_MODULE_ID_PE, VOS_TRACE_LEVEL_INFO,
-                         ("%02X, %02X, %02X,%02X, %02X, %02X"),
-                                    peerMac[0],
-                                    peerMac[1],
-                                    peerMac[2],
-                                    peerMac[3],
-                                    peerMac[4],
-                                    peerMac[5]);
+                      ("TDLS setup CNF timer expires for peer: "
+                       MAC_ADDRESS_STR), MAC_ADDR_ARRAY(peerMac));
             limTdlsFindLinkPeer(pMac, peerMac, &setupPeer) ;
             if(NULL != setupPeer)
             {
@@ -1948,6 +1924,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
 
            /*Free message body pointer*/
            vos_mem_free((v_VOID_t *)(limMsg->bodyptr));
+           limMsg->bodyptr = NULL;
            break;
        }
 
@@ -1973,6 +1950,7 @@ limProcessMessages(tpAniSirGlobal pMac, tpSirMsgQ  limMsg)
           linkStateParams->callback( pMac, linkStateParams->callbackArg );
        }
        vos_mem_free((v_VOID_t *)(limMsg->bodyptr));
+       limMsg->bodyptr = NULL;
        break;
 
 #ifdef WLAN_FEATURE_PACKET_FILTERING
@@ -2180,6 +2158,7 @@ void limProcessNormalHddMsg(tpAniSirGlobal pMac, tSirMsgQ *pLimMsg, tANI_U8 fRsp
             limPrintMsgName(pMac, LOGE, pLimMsg->type);
             // Release body
             vos_mem_free(pLimMsg->bodyptr);
+            pLimMsg->bodyptr = NULL;
         }
     }
     else
@@ -2200,6 +2179,7 @@ void limProcessNormalHddMsg(tpAniSirGlobal pMac, tSirMsgQ *pLimMsg, tANI_U8 fRsp
             // Release body
             // limProcessSmeReqMessage consumed the buffer. We can free it.
             vos_mem_free(pLimMsg->bodyptr);
+            pLimMsg->bodyptr = NULL;
         }
     }
 }
