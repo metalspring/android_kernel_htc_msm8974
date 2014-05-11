@@ -57,9 +57,9 @@ struct writeback_control {
 	unsigned tagged_writepages:1;	
 	unsigned for_reclaim:1;		
 	unsigned range_cyclic:1;	
+	unsigned for_sync:1;	
 };
 
-	
 struct bdi_writeback;
 int inode_wait(void *);
 void writeback_inodes_sb(struct super_block *, enum wb_reason reason);
