@@ -365,6 +365,9 @@ CFLAGS_KERNEL   = -mfpu=neon-vfpv4 \
 ifdef CONFIG_CC_GRAPHITE_OPTIMIZATION
 CFLAGS_KERNEL	+= -fgraphite-identity -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block
 endif
+ifdef CONFIG_CC_LINK_TIME_OPTIMIZATION
+CFLAGS_KERNEL	+= -flto -fno-toplevel-reorder -fuse-linker-plugin
+endif
 AFLAGS_KERNEL	=
 CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 
@@ -585,6 +588,9 @@ KBUILD_CFLAGS	+= -O3
 endif
 ifdef CONFIG_CC_GRAPHITE_OPTIMIZATION
 KBUILD_CFLAGS	+= -fgraphite-identity -floop-parallelize-all -ftree-loop-linear -floop-interchange -floop-strip-mine -floop-block
+endif
+ifdef CONFIG_CC_LINK_TIME_OPTIMIZATION
+KBUILD_CFLAGS	+= -flto -fno-toplevel-reorder -fuse-linker-plugin
 endif
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
