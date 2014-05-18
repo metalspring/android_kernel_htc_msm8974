@@ -961,6 +961,16 @@ config CC_LINK_TIME_OPTIMIZATION
 
 	  If unsure, say N.
 
+config CC_EXPERIMENTAL_OPTIMIZATIONS
+	bool "Enable experimental optimizations"
+	help
+	  Enabling these options may improve performance, but they
+	  are highly experimental and may break the build, cause
+	  the kernel to not boot or have issues. Enable at your
+	  own risk.
+
+	  If unsure, say N.
+
 config SYSCTL
 	bool
 

@@ -368,6 +368,9 @@ endif
 ifdef CONFIG_CC_LINK_TIME_OPTIMIZATION
 CFLAGS_KERNEL	+= -flto -fno-toplevel-reorder -fuse-linker-plugin
 endif
+ifdef CONFIG_CC_EXPERIMENTAL_OPTIMIZATIONS
+CFLAGS_KERNEL	+= -ffast-math -fsingle-precision-constant -ftree-loop-distribution -ftree-parallelize-loops=4
+endif
 AFLAGS_KERNEL	=
 CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 
@@ -591,6 +594,9 @@ KBUILD_CFLAGS	+= -fgraphite-identity -floop-parallelize-all -ftree-loop-linear -
 endif
 ifdef CONFIG_CC_LINK_TIME_OPTIMIZATION
 KBUILD_CFLAGS	+= -flto -fno-toplevel-reorder -fuse-linker-plugin
+endif
+ifdef CONFIG_CC_EXPERIMENTAL_OPTIMIZATIONS
+KBUILD_CFLAGS	+= -ffast-math -fsingle-precision-constant -ftree-loop-distribution -ftree-parallelize-loops=4
 endif
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
